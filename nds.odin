@@ -348,50 +348,117 @@ proc get_file(folder: Folder, path: string) -> (File, bool) {
 	return File{}, false;
 }
 
+type Narc_Archive struct {
+	files: [][]u8
+}
+
+proc get_narc_archive(data: []u8) -> (Narc_Archive, bool) {
+	proc read_nitro_frames(data: []u8) -> map[string][]u8 {
+		var frame_count = buffer.read_u16(data, 0x0E);
+		var offset: u32 = 0x10;
+		var frames: map[string][]u8;
+
+		for i in 0..<frame_count {
+			var magic_string = string(make([]u8, 4));
+			magic_string[0] = data[offset + 3];
+			magic_string[1] = data[offset + 2];
+			magic_string[2] = data[offset + 1];
+			magic_string[3] = data[offset];
+
+			var frame_size = buffer.read_u32(data, u64(offset + 4));
+
+			if u32(i) == frame_size - 1 && offset + frame_size < u32(len(data)) {
+				frame_size = u32(len(data)) - offset;
+			}
+
+			var frame_offset = offset + 8;
+			frames[magic_string] = data[frame_offset..frame_offset + (frame_size - 8)];
+			offset += frame_size;
+		}
+
+		return frames;
+	}
+
+	var result = Narc_Archive{};
+	var frames = read_nitro_frames(data);
+	var fatb, contains_fatb = frames["FATB"];
+	var fntb, contains_fntb = frames["FNTB"];
+	var fimg, contains_fimg = frames["FIMG"];
+
+	if !contains_fatb || !contains_fntb || !contains_fimg { return result, false; }
+
+	var file_count = buffer.read_u32(fatb, 0);
+	result.files = make([][]u8, file_count);
+
+	for i in 0..<file_count {
+
+		var start_offset = buffer.read_u32(fatb, u64((i * 8) + 4));
+		var end_offset = buffer.read_u32(fatb, u64((i * 8) + 8));
+
+		result.files[i] = fimg[start_offset..end_offset];
+	}
+
+	return result, true;
+}
+
 type Pokemon struct {
-	hp, attack, defense, speed, sp_attack, sp_defense: u8,
-	type1, type2: u8,
-	catch_rate: u8,
-	common_held, rare_held, dark_grass_held: u16,
-	exp_curve: u8,
-	ability1, ability2, ability3: u8,
+	hp, attack, defense, speed, sp_attack, sp_defense: ^u8,
+	type1, type2: ^u8,
+	catch_rate: ^u8,
+	common_held, rare_held, dark_grass_held: ^u16,
+	exp_curve: ^u8,
+	ability1, ability2, ability3: ^u8,
 }
 
 proc get_pokemons(rom: Rom) -> []Pokemon {
 	const bw2_pokemon_stats_path = "a/0/1/6";
-	const bw2_first_pokemon_offset = 5732;
-	const bw2_pokemon_data_count = 76;
 
-	var pokemons: [dynamic]Pokemon;
-	var file, success = get_file(rom.root_folder, bw2_pokemon_stats_path);
-	var curr_offset = bw2_first_pokemon_offset;
+	// TODO: Handle errors
+	var pokemon_file, _ = get_file(rom.root_folder, bw2_pokemon_stats_path);
+	var pokemon_narc, _ = get_narc_archive(pokemon_file.data);
 
-	for curr_offset < len(file.data) {
-		var next_offset = curr_offset + bw2_pokemon_data_count;
-		var pokemon_data = file.data[curr_offset .. next_offset];
-		curr_offset = next_offset;
+	var pokemons = make([]Pokemon, len(pokemon_narc.files));
 
-		append(&pokemons, 
-			Pokemon{
-				hp = pokemon_data[0],
-				attack = pokemon_data[1],
-				defense = pokemon_data[2],
-				speed = pokemon_data[3],
-				sp_attack = pokemon_data[4],
-				sp_defense = pokemon_data[5],
-				type1 = pokemon_data[6],
-				type2 = pokemon_data[7],
-				catch_rate = pokemon_data[8],
-				common_held = buffer.read_u16(pokemon_data, 12),
-				rare_held = buffer.read_u16(pokemon_data, 14),
-				dark_grass_held = buffer.read_u16(pokemon_data, 14),
-				exp_curve = pokemon_data[21],
-				ability1 = pokemon_data[24],
-				ability2 = pokemon_data[25],
-				ability3 = pokemon_data[26],
-			}
-		);
+	for file, index in pokemon_narc.files {
+		var pokemon_data = file; // NOTE: We can't take a pointer to inside "file" for some reason, but reassigning does the trick.
+
+		pokemons[index] = Pokemon{
+			hp 				= &pokemon_data[0],
+			attack 			= &pokemon_data[1],
+			defense 		= &pokemon_data[2],
+			speed 			= &pokemon_data[3],
+			sp_attack 		= &pokemon_data[4],
+			sp_defense 		= &pokemon_data[5],
+			type1 			= &pokemon_data[6],
+			type2 			= &pokemon_data[7],
+			catch_rate 		= &pokemon_data[8],
+			common_held 	= ^u16(&pokemon_data[12]),
+			rare_held 		= ^u16(&pokemon_data[14]),
+			dark_grass_held = ^u16(&pokemon_data[16]),
+			exp_curve 		= &pokemon_data[21],
+			ability1 		= &pokemon_data[24],
+			ability2 		= &pokemon_data[25],
+			ability3 		= &pokemon_data[26],
+		};
 	}
 
-	return pokemons[..];
+	return pokemons;
+}
+
+type Trainer_Pokemon struct {
+
+}
+
+type Trainer struct {
+
+}
+
+proc get_trainers(rom: Rom) -> []Trainer {
+	const bw2_trainer_data_path = "a/0/9/1";
+	const bw2_trainer_pokemon_path = "a/0/9/2";
+
+	var trainer_narc, _ = get_file(rom.root_folder, bw2_trainer_data_path);
+	var trainer_pokemon_narc, _ = get_file(rom.root_folder, bw2_trainer_pokemon_path);
+
+	return []Trainer{};
 }
