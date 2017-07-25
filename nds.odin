@@ -12,11 +12,31 @@ import(
 );
 
 type Rom struct {
-	data: []u8,
+	data: []u8, // Heap!
 	header: Header,
 	banner: Banner,
 	fat: FAT,
 	root_folder: Folder
+}
+
+proc dispose(rom: Rom) {
+	free(rom.data);
+}
+
+proc read_rom(path: string) -> (Rom, bool) {
+	var result = Rom{};
+
+	var data, success = os.read_entire_file(path);
+
+	if success {
+		result.data = data;
+		result.header = read_header(data);
+		result.banner = read_banner(data, result.header.banner_offset);
+		result.fat = read_fat(data, result.header.fat_offset, result.header.fat_size);
+		result.root_folder = read_files(data, result.header.fnt_offset, result.fat);
+	}
+
+	return result, success;
 }
 
 type Header struct {
@@ -49,62 +69,6 @@ type Header struct {
 	debug_rom_offset, debug_size, debug_ram_address: u32,
 	reserved3: u32,
 	// reserved4: [0x90]u8
-}
-
-type Banner struct {
-	version, crc16: u16,
-	check_crc: bool,
-	reserved: [28]u8,
-	tile_data: [512]u8,
-	palette: [32]u8,
-	japanese_title, english_title, french_title: [256]u8, 
-	german_title, italian_title, spanish_title: [256]u8,
-}
-
-
-type File_Allocation struct {
-	size, offset: u32
-}
-
-type FAT struct {
-	files: []File_Allocation
-}
-
-type File struct {
-	data: []u8,
-	offset, size: u32,
-	name: string, // NOTE: Heap!
-	id: u16
-}
-
-type Folder struct {
-	files: [dynamic]File, // NOTE: Heap!
-	folders: [dynamic]Folder, // NOTE: Heap!
-	name: string, // NOTE: Heap!
-	id: u16
-}
-
-type MainFNT struct {
-	offset: u32,
-	first_file_id: u16,
-	parent_id: u16,
-	sub_table: Folder
-}
-
-proc read_rom(path: string) -> (Rom, bool) {
-	var result = Rom{};
-
-	var data, success = os.read_entire_file(path /* "D:\\Mega\\ProgramDataDump\\RandomizerSettings\\PokemonBlack2.nds" */);
-
-	if success {
-		result.data = data;
-		result.header = read_header(data);
-		result.banner = read_banner(data, result.header.banner_offset);
-		result.fat = read_fat(data, result.header.fat_offset, result.header.fat_size);
-		result.root_folder = read_files(data, result.header.fnt_offset, result.fat);
-	}
-
-	return result, success;
 }
 
 proc read_header(rom: []u8) -> Header {
@@ -201,6 +165,16 @@ proc read_header(rom: []u8) -> Header {
 	return result;
 }
 
+type Banner struct {
+	version, crc16: u16,
+	check_crc: bool,
+	reserved: [28]u8,
+	tile_data: [512]u8,
+	palette: [32]u8,
+	japanese_title, english_title, french_title: [256]u8, 
+	german_title, italian_title, spanish_title: [256]u8,
+}
+
 proc read_banner(rom: []u8, offset: u32) -> Banner {
 	var reader = buffer.Buffer_Reader{ data = rom, offset = u64(offset) };
 	var result = Banner{};
@@ -230,6 +204,15 @@ proc read_banner(rom: []u8, offset: u32) -> Banner {
 	return result;
 }
 
+
+type File_Allocation struct {
+	size, offset: u32
+}
+
+type FAT struct {
+	files: []File_Allocation // Heap!
+}
+
 proc read_fat(rom: []u8, offset, size: u32) -> FAT {
 	var reader = buffer.Buffer_Reader{ data = rom, offset = u64(offset) };
 	var fat = FAT{ files = make([]File_Allocation, size / 0x08) };
@@ -245,8 +228,53 @@ proc read_fat(rom: []u8, offset, size: u32) -> FAT {
 	return fat;
 }
 
+type File struct {
+	data: []u8,
+	offset, size: u32,
+	name: string, // Heap!
+	id: u16
+}
+
+proc dispose(file: File) {
+	free(file.name);
+}
+
+type Folder struct {
+	files: [dynamic]File, // Heap!
+	folders: [dynamic]Folder, // Heap!
+	name: string, // Heap!
+	id: u16
+}
+
+proc dispose(folder: Folder) {
+	for file in folder.files { dispose(file); }
+	for fold in folder.folders { dispose(fold); }
+	free(folder.name);
+}
+
 
 proc read_files(rom: []u8, fnt_offset: u32, fat: FAT) -> Folder {
+	type MainFNT struct {
+		offset: u32,
+		first_file_id: u16,
+		parent_id: u16,
+		sub_table: Folder
+	}
+
+	proc build_folder(mains: []MainFNT, id: u16, name: string) -> Folder {
+		var main = mains[id & 0xFFF];
+		var folder = Folder{};
+		folder.name = name;
+		folder.id = id;
+		folder.files = main.sub_table.files;
+
+		for f in main.sub_table.folders {
+			append(&folder.folders, build_folder(mains, f.id, f.name));
+		}
+
+		return folder;
+	}
+
 	var reader = buffer.Buffer_Reader{ data = rom, offset = u64(fnt_offset) };
 	var mains = [dynamic]MainFNT;
 
@@ -300,20 +328,6 @@ proc read_files(rom: []u8, fnt_offset: u32, fat: FAT) -> Folder {
 		reader.offset = current_offset;
 	}
 
-	proc build_folder(mains: []MainFNT, id: u16, name: string) -> Folder {
-		var main = mains[id & 0xFFF];
-		var folder = Folder{};
-		folder.name = name;
-		folder.id = id;
-		folder.files = main.sub_table.files;
-
-		for f in main.sub_table.folders {
-			append(&folder.folders, build_folder(mains, f.id, f.name));
-		}
-
-		return folder;
-	}
-
 	var root = build_folder(mains[..], 0, "root");
 	root.id = folder_count;
 
@@ -349,7 +363,11 @@ proc get_file(folder: Folder, path: string) -> (File, bool) {
 }
 
 type Narc_Archive struct {
-	files: [][]u8
+	files: [][]u8 // Heap!
+}
+
+proc dispose(narc: Narc_Archive) {
+	free(narc.files);
 }
 
 proc get_narc_archive(data: []u8) -> (Narc_Archive, bool) {
@@ -381,6 +399,11 @@ proc get_narc_archive(data: []u8) -> (Narc_Archive, bool) {
 
 	var result = Narc_Archive{};
 	var frames = read_nitro_frames(data);
+	defer {
+		for value, key in frames { free(key); }
+		free(frames);
+	}
+
 	var fatb, contains_fatb = frames["FATB"];
 	var fntb, contains_fntb = frames["FNTB"];
 	var fimg, contains_fimg = frames["FIMG"];
@@ -416,6 +439,7 @@ proc get_pokemons(rom: Rom) -> []Pokemon {
 	// TODO: Handle errors
 	var pokemon_file, _ = get_file(rom.root_folder, bw2_pokemon_stats_path);
 	var pokemon_narc, _ = get_narc_archive(pokemon_file.data);
+	defer dispose(pokemon_narc);
 
 	var pokemons = make([]Pokemon, len(pokemon_narc.files));
 
@@ -446,10 +470,48 @@ proc get_pokemons(rom: Rom) -> []Pokemon {
 }
 
 type Trainer_Pokemon struct {
+	ability, ai_level: ^u8,
+	level, pokemon: ^u16
+}
+
+type Trainer_Pokemon_Moves struct {
+	using base: Trainer_Pokemon,
+	moves: []u16
+}
+
+type Trainer_Pokemon_Held struct {
+	using base: Trainer_Pokemon,
+	held_item: ^u16
+}
+
+type Trainer_Pokemon_Both struct {
+	using base: Trainer_Pokemon,
+	held_item: ^u16,
+	moves: []u16
+}
+
+type Trainer union {
+	trainer_class: ^u8,
+
+	Normal {
+		pokemons: []Trainer_Pokemon // Heap!
+	},
+	Has_Moves {
+		pokemons: []Trainer_Pokemon_Moves // Heap!
+	},
+	Has_Held {
+		pokemons: []Trainer_Pokemon_Held // Heap!
+	},
+	Has_Both {
+		pokemons: []Trainer_Pokemon_Both // Heap!
+	}	
+}
+
+proc dispose(trainer: Trainer) {
 
 }
 
-type Trainer struct {
+proc dispose(trainers: []Trainer) {
 
 }
 
@@ -457,8 +519,100 @@ proc get_trainers(rom: Rom) -> []Trainer {
 	const bw2_trainer_data_path = "a/0/9/1";
 	const bw2_trainer_pokemon_path = "a/0/9/2";
 
-	var trainer_narc, _ = get_file(rom.root_folder, bw2_trainer_data_path);
-	var trainer_pokemon_narc, _ = get_file(rom.root_folder, bw2_trainer_pokemon_path);
+	// TODO: Handle errors
+	var trainer_file, _ 		= get_file(rom.root_folder, bw2_trainer_data_path);
+	var trainer_pokemon_file, _ = get_file(rom.root_folder, bw2_trainer_pokemon_path);
+	var trainer_narc, _ 		= get_narc_archive(trainer_file.data);
+	var trainer_pokemon_narc, _ = get_narc_archive(trainer_pokemon_file.data);
+	var trainers = make([]Trainer, len(trainer_narc.files));
 
-	return []Trainer{};
+	for i in 0..<len(trainers) {
+		var trainer_file 		 = trainer_narc.files[i];
+		var trainer_pokemon_file = trainer_pokemon_narc.files[i];
+
+		var trainer_type = trainer_file[0];
+		var pokemon_count = trainer_file[3];
+
+		var reader = buffer.Buffer_Reader {
+			data = trainer_pokemon_file,
+			offset = 0
+		};
+
+		proc get_base(reader: ^buffer.Buffer_Reader) -> Trainer_Pokemon {
+			var result = Trainer_Pokemon{};
+
+			result.ai_level = buffer.read_ptr8(reader);
+			result.ability = buffer.read_ptr8(reader); // secondbyte
+			result.level = buffer.read_ptr16(reader);
+			result.pokemon = buffer.read_ptr16(reader);
+			buffer.read_ptr16(reader); // formnum
+
+			return result;
+		}
+
+		if (trainer_type & 2) == 2 && (trainer_type & 1) == 1 {
+			var pokemons = make([]Trainer_Pokemon_Both, pokemon_count);
+
+			for j in 0..<len(pokemons) {
+				var pokemon = Trainer_Pokemon_Both{};
+
+				pokemon.base = get_base(&reader);
+				pokemon.held_item = buffer.read_ptr16(&reader);
+				pokemon.moves = slice_ptr(^u16(&reader.data[reader.offset]), 4);
+				reader.offset += 8;
+
+				pokemons[j] = pokemon;
+			}
+
+			trainers[i] = Trainer.Has_Both {
+				trainer_class = &trainer_file[1],
+				pokemons = pokemons
+			};
+		} else if (trainer_type & 2) == 2 {
+			var pokemons = make([]Trainer_Pokemon_Held, pokemon_count);
+
+			for j in 0..<len(pokemons) {
+				var pokemon = Trainer_Pokemon_Held{};
+
+				pokemon.base = get_base(&reader);
+				pokemon.held_item = buffer.read_ptr16(&reader);
+
+				pokemons[j] = pokemon;
+			}
+
+			trainers[i] = Trainer.Has_Held {
+				trainer_class = &trainer_file[1],
+				pokemons = pokemons
+			};
+		} else if (trainer_type & 1) == 1 {
+			var pokemons = make([]Trainer_Pokemon_Moves, pokemon_count);
+
+			for j in 0..<len(pokemons) {
+				var pokemon = Trainer_Pokemon_Moves{};
+
+				pokemon.base = get_base(&reader);
+				pokemon.moves = slice_ptr(^u16(&reader.data[reader.offset]), 4);
+				reader.offset += 8;
+
+				pokemons[j] = pokemon;
+			}
+
+			trainers[i] = Trainer.Has_Moves {
+				trainer_class = &trainer_file[1],
+				pokemons = pokemons
+			};
+		} else {
+			var pokemons = make([]Trainer_Pokemon, pokemon_count);
+
+			for j in 0..<len(pokemons) { pokemons[j] = get_base(&reader); }
+
+			trainers[i] = Trainer.Normal {
+				trainer_class = &trainer_file[1],
+				pokemons = pokemons
+			};
+		}
+	}
+
+	return trainers;
 }
+

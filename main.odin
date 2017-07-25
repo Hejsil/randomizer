@@ -85,14 +85,82 @@ proc print_pokemon(pokemon: nds.Pokemon) {
 	fmt.println("}");
 }
 
+proc print_trainer(trainer: nds.Trainer) {
+	fmt.println("Trainer {");
+	fmt.println("	trainer_class =", trainer.trainer_class^);
+
+	fmt.println("	pokemons = [");
+
+	proc print_base(base: nds.Trainer_Pokemon) {
+		fmt.println("			ability =", base.ability^);
+		fmt.println("			ai_level =", base.ai_level^);
+		fmt.println("			level =", base.level^);
+		fmt.println("			pokemon =", base.pokemon^);
+	}
+
+	proc print_moves(moves: []u16) {
+
+		var first = true;
+		for move in moves {
+			if !first {
+				fmt.print(", ");
+			}
+
+			fmt.print(move);
+			first = false;
+		}
+
+		fmt.println(" ]");
+	}
+
+	match t in trainer {
+		case nds.Trainer.Normal:
+			for pokemon in t.pokemons {
+				fmt.println("		{");
+				print_base(pokemon);
+				fmt.println("		}");
+			}
+
+		case nds.Trainer.Has_Moves:
+			for pokemon in t.pokemons {
+				fmt.println("		{");
+				print_base(pokemon);
+				fmt.println("			moves =", pokemon.moves);
+				fmt.println("		}");
+			}
+
+		case nds.Trainer.Has_Held:
+			for pokemon in t.pokemons {
+				fmt.println("		{");
+				print_base(pokemon);
+				fmt.println("			held_item = ", pokemon.held_item^);
+				fmt.println("		}");
+			}
+
+		case nds.Trainer.Has_Both:
+			for pokemon in t.pokemons {
+				fmt.println("		{");
+				print_base(pokemon);
+				fmt.println("			held_item = ", pokemon.held_item^);
+				fmt.println("			moves =", pokemon.moves);
+				fmt.println("		}");
+			}
+	}
+
+	fmt.println("	]");
+
+	fmt.println("}");
+}
+
 proc main() {
 	var rom, success = nds.read_rom("D:\\Mega\\ProgramDataDump\\RandomizerSettings\\PokemonBlack2.nds");
-	//defer free(rom);
+	defer nds.dispose(rom);
 
 	if success {
 		var pokemons = nds.get_pokemons(rom);
+		var trainers = nds.get_trainers(rom);
 		print_pokemon(pokemons[43]);
-		fmt.println(len(pokemons));
+		print_trainer(trainers[1]);
 		//fmt.println(os.write_entire_file("D:\\Mega\\ProgramDataDump\\RandomizerSettings\\Stench.nds", rom.data));
 	}
 }

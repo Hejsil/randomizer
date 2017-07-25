@@ -40,6 +40,34 @@ proc read_u64(r: ^Buffer_Reader) -> u64 {
 	return result;
 }
 
+proc read_ptr8(r: ^Buffer_Reader) -> ^u8 {
+	var result = &r.data[r.offset];
+	r.offset += size_of(u8);
+
+	return result;
+}
+
+proc read_ptr16(r: ^Buffer_Reader) -> ^u16 {
+	var result = ^u16(&r.data[r.offset]);
+	r.offset += size_of(u16);
+
+	return result;
+}
+
+proc read_ptr32(r: ^Buffer_Reader) -> ^u32 {
+	var result = ^u32(&r.data[r.offset]);
+	r.offset += size_of(u32);
+
+	return result;
+}
+
+proc read_ptr64(r: ^Buffer_Reader) -> ^u64 {
+	var result = ^u64(&r.data[r.offset]);
+	r.offset += size_of(u64);
+
+	return result;
+}
+
 proc read_u16(src: []u8, offset: u64) -> u16 {
 	return (^u16(&src[offset]))^;
 }
