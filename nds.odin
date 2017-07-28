@@ -439,6 +439,7 @@ proc get_pokemons(rom: Rom) -> []poke.Pokemon {
 		var pokemon_data = file; // NOTE: We can't take a pointer to inside "file" for some reason, but reassigning does the trick.
 
 		pokemons[index] = poke.Pokemon{
+			id 				= u16(index),
 			hp 				= &pokemon_data[0],
 			attack 			= &pokemon_data[1],
 			defense 		= &pokemon_data[2],

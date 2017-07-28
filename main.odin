@@ -1,4 +1,5 @@
 import(
+	"bits.odin";
 	"os.odin";
 	"fmt.odin";
 );
@@ -132,56 +133,71 @@ type Type_Replacement_Method enum {
 
 proc randomize_trainer_pokemons(
 	randomizer: ^random.Randomizer_64bit, trainers: []poke.Trainer, pokemons: []poke.Pokemon,
-	max_stat_difference: u64, // Pass high number, and you will always pick between all pokemons
-	replacement_type: Type_Replacement_Method) {
+	simular_stats: bool,
+	replacement_method: Type_Replacement_Method) {
 
-	proc get_replacement(
-		randomizer: ^random.Randomizer_64bit, current_pokemon: ^poke.Pokemon, pokemons: []poke.Pokemon,
-		max_stat_difference: u64,
-		types: []u8) -> u16 {
 
-		var current_stats = poke.total_stats(current_pokemon);
-
-		for {
-			var choice = u16(random.x_or_shift_64_star(randomizer) % u64(len(pokemons)));
-			var pokemon = &pokemons[choice];
-
-			if (len(types) > 0) && pokemon.type1^ != types[0] { continue; }
-			if (len(types) > 1) && pokemon.type2^ != types[1] { continue; }
-
-			var stats = poke.total_stats(pokemon);
-			var diff = abs(current_stats - stats);
-
-			// TODO: This method is really slow. We could sort pokemon by stats, and then pick pokemons close to the one that we are replacing
-			if max_stat_difference < u64(diff) { 
-				max_stat_difference++; // We slowly increase our min, to avoid the problem, where no pokemon is within the minimum stat requirements
-				continue;
+	proc get_replament(randomizer: ^random.Randomizer_64bit, current_pokemon: ^poke.Pokemon, pokemons: []poke.Pokemon, simular_stats: bool, types: []u8) -> u16 {
+		// TODO: Move out
+		proc contains(arr: []u8, element: u8) -> bool {
+			for item in arr {
+				if item == element { return true; }
 			}
 
-			return choice;
+			return false;
 		}
+
+		if !simular_stats {
+			for {
+				var choice = random.x_or_shift_64_star(randomizer) % u64(len(pokemons));
+				var pokemon = &pokemons[choice];
+
+				if len(types) > 0 && !contains(types, pokemon.type1^) && !contains(types, pokemon.type2^) { continue; }
+
+				return pokemon.id;
+			}
+		}
+
+		var current_total = poke.total_stats(current_pokemon);
+		var min = current_total - 10;
+		var max = current_total + 10;
+		var picked: [dynamic]^poke.Pokemon;
+		defer free(picked);
+
+		for len(picked) < 5 {
+			for i in 0..<len(pokemons) {
+				var pokemon = &pokemons[i];
+				if len(types) > 0 && !contains(types, pokemon.type1^) && !contains(types, pokemon.type2^) { continue; }
+
+				var total = poke.total_stats(pokemon);
+				if total < min || max < total { continue; }
+
+				append(&picked, pokemon);
+			}
+		}
+
+		return picked[random.x_or_shift_64_star(randomizer) % u64(len(picked))].id;
 	}
 
-	for trainer in trainers {
-		const type_count = 17;
-		var trainer_theme = u8(random.x_or_shift_64_star(randomizer) % type_count);
+	const type_count = 17;
 
-		using Type_Replacement_Method;
+	for trainer in trainers {
+		var trainer_theme = u8(random.x_or_shift_64_star(randomizer) % u64(type_count));
 
 		for trainer_pokemon in trainer.pokemons {
 			var pokemon_ptr = trainer_pokemon.pokemon;
 			var pokemon = &pokemons[pokemon_ptr^];
 
-			match replacement_type {
+			using Type_Replacement_Method;
+			match replacement_method {
 				case Trainer_Type_Themed:
-					pokemon_ptr^ = get_replacement(randomizer, pokemon, pokemons, max_stat_difference, []u8{ trainer_theme }); 
-
+					pokemon_ptr^ = get_replament(randomizer, pokemon, pokemons, simular_stats, []u8{ trainer_theme });
 				case Keep_Original_Pokemons_Type:
-					pokemon_ptr^ = get_replacement(randomizer, pokemon, pokemons, max_stat_difference, []u8{ pokemon.type1^, pokemon.type2^ }); 
-
+					pokemon_ptr^ = get_replament(randomizer, pokemon, pokemons, simular_stats, []u8{ pokemon.type1^, pokemon.type2^ });
 				case Random:
-					pokemon_ptr^ = get_replacement(randomizer, pokemon, pokemons, max_stat_difference, []u8{ u8(random.x_or_shift_64_star(randomizer) % type_count) }); 
+					pokemon_ptr^ = get_replament(randomizer, pokemon, pokemons, simular_stats, []u8{});
 			}
+
 		}
 	}
 }
@@ -192,6 +208,8 @@ import_load (
 	"os_linux.odin"   when ODIN_OS == "linux";
 )
 
+import "sys/windows.odin";
+
 proc main() {
 	var rom, success = nds.read_rom("D:\\Mega\\ProgramDataDump\\RandomizerSettings\\PokemonBlack2.nds");
 	defer nds.dispose(rom);
@@ -200,12 +218,10 @@ proc main() {
 		var pokemons = nds.get_pokemons(rom);
 		var trainers = nds.get_trainers(rom);
 
-		print_trainer(trainers[1]);
+		//print_trainer(trainers[1]);
 
-		var randomizer = random.Randomizer_64bit{ seed = 111 };
-		randomize_trainer_pokemons(&randomizer, trainers, pokemons, 0, Type_Replacement_Method.Random);
-
-		print_trainer(trainers[1]);
+		var randomizer = random.Randomizer_64bit{ seed = u64(windows.time_get_time()) };
+		randomize_trainer_pokemons(&randomizer, trainers, pokemons, true, Type_Replacement_Method.Random);
 
 
 

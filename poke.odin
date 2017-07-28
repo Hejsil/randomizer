@@ -31,6 +31,7 @@ proc dispose(trainers: []Trainer) {
 }
 
 type Pokemon struct {
+	id: u16,
 	hp, attack, defense, speed, sp_attack, sp_defense: ^u8,
 	type1, type2: ^u8,
 	catch_rate: ^u8,
@@ -42,4 +43,8 @@ type Pokemon struct {
 proc total_stats(pokemon: ^Pokemon) -> u16 {
 	using pokemon;
 	return u16(hp^) + u16(attack^) + u16(defense^) + u16(speed^) + u16(sp_attack^) + u16(sp_defense^);
+}
+
+proc is_type(pokemon: ^Pokemon, pokemon_type: u8) -> bool {
+	return pokemon.type1^ == pokemon_type || pokemon.type2^ == pokemon_type;
 }
