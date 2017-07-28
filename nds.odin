@@ -6,6 +6,7 @@ import(
 );
 
 import(
+	"poke.odin";
 	"nds.odin";
 	"buffer.odin";
 	"crc.odin";
@@ -424,16 +425,7 @@ proc get_narc_archive(data: []u8) -> (Narc_Archive, bool) {
 	return result, true;
 }
 
-type Pokemon struct {
-	hp, attack, defense, speed, sp_attack, sp_defense: ^u8,
-	type1, type2: ^u8,
-	catch_rate: ^u8,
-	common_held, rare_held, dark_grass_held: ^u16,
-	exp_curve: ^u8,
-	ability1, ability2, ability3: ^u8,
-}
-
-proc get_pokemons(rom: Rom) -> []Pokemon {
+proc get_pokemons(rom: Rom) -> []poke.Pokemon {
 	const bw2_pokemon_stats_path = "a/0/1/6";
 
 	// TODO: Handle errors
@@ -441,12 +433,12 @@ proc get_pokemons(rom: Rom) -> []Pokemon {
 	var pokemon_narc, _ = get_narc_archive(pokemon_file.data);
 	defer dispose(pokemon_narc);
 
-	var pokemons = make([]Pokemon, len(pokemon_narc.files));
+	var pokemons = make([]poke.Pokemon, len(pokemon_narc.files));
 
 	for file, index in pokemon_narc.files {
 		var pokemon_data = file; // NOTE: We can't take a pointer to inside "file" for some reason, but reassigning does the trick.
 
-		pokemons[index] = Pokemon{
+		pokemons[index] = poke.Pokemon{
 			hp 				= &pokemon_data[0],
 			attack 			= &pokemon_data[1],
 			defense 		= &pokemon_data[2],
@@ -469,53 +461,7 @@ proc get_pokemons(rom: Rom) -> []Pokemon {
 	return pokemons;
 }
 
-type Trainer_Pokemon struct {
-	ability, ai_level: ^u8,
-	level, pokemon: ^u16
-}
-
-type Trainer_Pokemon_Moves struct {
-	using base: Trainer_Pokemon,
-	moves: []u16
-}
-
-type Trainer_Pokemon_Held struct {
-	using base: Trainer_Pokemon,
-	held_item: ^u16
-}
-
-type Trainer_Pokemon_Both struct {
-	using base: Trainer_Pokemon,
-	held_item: ^u16,
-	moves: []u16
-}
-
-type Trainer union {
-	trainer_class: ^u8,
-
-	Normal {
-		pokemons: []Trainer_Pokemon // Heap!
-	},
-	Has_Moves {
-		pokemons: []Trainer_Pokemon_Moves // Heap!
-	},
-	Has_Held {
-		pokemons: []Trainer_Pokemon_Held // Heap!
-	},
-	Has_Both {
-		pokemons: []Trainer_Pokemon_Both // Heap!
-	}	
-}
-
-proc dispose(trainer: Trainer) {
-
-}
-
-proc dispose(trainers: []Trainer) {
-
-}
-
-proc get_trainers(rom: Rom) -> []Trainer {
+proc get_trainers(rom: Rom) -> []poke.Trainer {
 	const bw2_trainer_data_path = "a/0/9/1";
 	const bw2_trainer_pokemon_path = "a/0/9/2";
 
@@ -524,7 +470,7 @@ proc get_trainers(rom: Rom) -> []Trainer {
 	var trainer_pokemon_file, _ = get_file(rom.root_folder, bw2_trainer_pokemon_path);
 	var trainer_narc, _ 		= get_narc_archive(trainer_file.data);
 	var trainer_pokemon_narc, _ = get_narc_archive(trainer_pokemon_file.data);
-	var trainers = make([]Trainer, len(trainer_narc.files));
+	var trainers = make([]poke.Trainer, len(trainer_narc.files));
 
 	for i in 0..<len(trainers) {
 		var trainer_file 		 = trainer_narc.files[i];
@@ -538,8 +484,8 @@ proc get_trainers(rom: Rom) -> []Trainer {
 			offset = 0
 		};
 
-		proc get_base(reader: ^buffer.Buffer_Reader) -> Trainer_Pokemon {
-			var result = Trainer_Pokemon{};
+		proc get_base(reader: ^buffer.Buffer_Reader) -> poke.Trainer_Pokemon {
+			var result = poke.Trainer_Pokemon{};
 
 			result.ai_level = buffer.read_ptr8(reader);
 			result.ability = buffer.read_ptr8(reader); // secondbyte
@@ -550,67 +496,59 @@ proc get_trainers(rom: Rom) -> []Trainer {
 			return result;
 		}
 
-		if (trainer_type & 2) == 2 && (trainer_type & 1) == 1 {
-			var pokemons = make([]Trainer_Pokemon_Both, pokemon_count);
+		var pokemons = make([]poke.Trainer_Pokemon, pokemon_count);
 
-			for j in 0..<len(pokemons) {
-				var pokemon = Trainer_Pokemon_Both{};
+		for j in 0..<len(pokemons) {
+			var ai_level = buffer.read_ptr8(&reader);
+			var ability = buffer.read_ptr8(&reader); // secondbyte
+			var level = buffer.read_ptr16(&reader);
+			var pokemon = buffer.read_ptr16(&reader);
+			var formnum = buffer.read_ptr16(&reader);
 
-				pokemon.base = get_base(&reader);
-				pokemon.held_item = buffer.read_ptr16(&reader);
-				pokemon.moves = slice_ptr(^u16(&reader.data[reader.offset]), 4);
+			if (trainer_type & 2) == 2 && (trainer_type & 1) == 1 {
+				pokemons[j] = poke.Trainer_Pokemon.Has_Both {
+					ai_level = ai_level,
+					ability = ability,
+					level = level,
+					pokemon = pokemon,
+					held_item = buffer.read_ptr16(&reader),
+					moves = slice_ptr(^u16(&reader.data[reader.offset]), 4)
+				};
+
 				reader.offset += 8;
+				
+			} else if (trainer_type & 2) == 2 {
+				pokemons[j] = poke.Trainer_Pokemon.Has_Held {
+					ai_level = ai_level,
+					ability = ability,
+					level = level,
+					pokemon = pokemon,
+					held_item = buffer.read_ptr16(&reader)
+				};
+			} else if (trainer_type & 1) == 1 {
+				pokemons[j] = poke.Trainer_Pokemon.Has_Moves {
+					ai_level = ai_level,
+					ability = ability,
+					level = level,
+					pokemon = pokemon,
+					moves = slice_ptr(^u16(&reader.data[reader.offset]), 4)
+				};
 
-				pokemons[j] = pokemon;
-			}
-
-			trainers[i] = Trainer.Has_Both {
-				trainer_class = &trainer_file[1],
-				pokemons = pokemons
-			};
-		} else if (trainer_type & 2) == 2 {
-			var pokemons = make([]Trainer_Pokemon_Held, pokemon_count);
-
-			for j in 0..<len(pokemons) {
-				var pokemon = Trainer_Pokemon_Held{};
-
-				pokemon.base = get_base(&reader);
-				pokemon.held_item = buffer.read_ptr16(&reader);
-
-				pokemons[j] = pokemon;
-			}
-
-			trainers[i] = Trainer.Has_Held {
-				trainer_class = &trainer_file[1],
-				pokemons = pokemons
-			};
-		} else if (trainer_type & 1) == 1 {
-			var pokemons = make([]Trainer_Pokemon_Moves, pokemon_count);
-
-			for j in 0..<len(pokemons) {
-				var pokemon = Trainer_Pokemon_Moves{};
-
-				pokemon.base = get_base(&reader);
-				pokemon.moves = slice_ptr(^u16(&reader.data[reader.offset]), 4);
 				reader.offset += 8;
-
-				pokemons[j] = pokemon;
+			} else {
+				pokemons[j] = poke.Trainer_Pokemon.Normal {
+					ai_level = ai_level,
+					ability = ability,
+					level = level,
+					pokemon = pokemon
+				};
 			}
-
-			trainers[i] = Trainer.Has_Moves {
-				trainer_class = &trainer_file[1],
-				pokemons = pokemons
-			};
-		} else {
-			var pokemons = make([]Trainer_Pokemon, pokemon_count);
-
-			for j in 0..<len(pokemons) { pokemons[j] = get_base(&reader); }
-
-			trainers[i] = Trainer.Normal {
-				trainer_class = &trainer_file[1],
-				pokemons = pokemons
-			};
 		}
+
+		trainers[i] = poke.Trainer {
+			trainer_class = &trainer_file[1],
+			pokemons = pokemons
+		};
 	}
 
 	return trainers;
